@@ -18,10 +18,15 @@
     .btnrow { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
     button { padding: 10px 14px; font-size: 1rem; border: 1px solid #111; border-radius: 10px; background: #111; color: #fff; cursor: pointer; }
     button.secondary { background: #fff; color: #111; }
+    button.small { padding: 8px 10px; font-size: .9rem; border-radius: 8px; }
     .results { border: 2px solid #111; border-radius: 12px; padding: 14px; margin-top: 18px; }
     .scores { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; margin-top: 10px; }
     .chip { border: 1px solid #ddd; border-radius: 999px; padding: 8px 10px; text-align: center; }
     .small { color:#444; font-size: .92rem; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .status { margin-top: 10px; font-weight: 600; }
+    .status.success { color: green; }
+    .status.error { color: #b00020; }
   </style>
 </head>
 <body>
@@ -31,22 +36,36 @@
     Each number can be used <b>only once per set</b>.
   </div>
 
-  <div id="quiz"></div>
+  <!-- The quiz is now a real form so it can be submitted, serialized, printed, etc. -->
+  <form id="quizForm" novalidate>
+    <div id="quiz"></div>
 
-  <div class="btnrow">
-    <button id="calcBtn">Calculate Result</button>
-    <button class="secondary" id="resetBtn" type="button">Reset</button>
-  </div>
+    <div class="btnrow">
+      <button id="calcBtn" type="button">Calculate Result</button>
+      <button class="secondary" id="resetBtn" type="button">Reset</button>
+      <button class="secondary" id="saveBtn" type="button">Save</button>
+      <button class="secondary" id="loadBtn" type="button">Load</button>
+      <button class="secondary" id="exportBtn" type="button">Export JSON</button>
+      <button class="secondary" id="shareBtn" type="button">Share Result (URL)</button>
+      <!-- Formspree submit button -->
+      <button class="secondary" id="submitFormspreeBtn" type="button">Submit Responses</button>
+    </div>
+
+    <!-- Honeypot / bot-field (kept outside visual flow). Formspree recognizes common fields like "bot-field" -->
+    <input type="text" name="bot-field" id="bot-field" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden" autocomplete="off" />
+
+  </form>
 
   <div id="globalError" class="error" style="display:none;"></div>
 
   <div id="output" style="display:none;" class="results"></div>
 
+  <div id="submitStatus" class="status" style="display:none;"></div>
+
 <script>
 /**
  * 10 sets x 4 words.
  * Each option has a "style" key: D, i, S, C
- * You can swap words freely as long as each set includes one of each style.
  */
 const SETS = [
   { title: "Set 1", items: [
@@ -133,7 +152,7 @@ const DESCRIPTIONS = {
 // ----- Render UI -----
 const quizEl = document.getElementById("quiz");
 
-function render() {
+function render(prefillData = null) {
   quizEl.innerHTML = "";
   SETS.forEach((set, setIdx) => {
     const wrapper = document.createElement("div");
@@ -152,10 +171,15 @@ function render() {
     const tbody = document.createElement("tbody");
     set.items.forEach((item, itemIdx) => {
       const tr = document.createElement("tr");
+
+      // Name is set-{setIdx}-item-{itemIdx} so the form serializes nicely
+      const inputName = `set-${setIdx}-item-${itemIdx}`;
+      const preValue = prefillData ? prefillData[inputName] : "";
+
       tr.innerHTML = `
         <td><b>${item.word}</b> <span class="small">(${item.style})</span></td>
         <td>
-          <select data-set="${setIdx}" data-item="${itemIdx}">
+          <select name="${inputName}" data-set="${setIdx}" data-item="${itemIdx}" required>
             <option value="">Select…</option>
             <option value="4">4</option>
             <option value="3">3</option>
@@ -183,6 +207,14 @@ function render() {
   document.querySelectorAll("select").forEach(sel => {
     sel.addEventListener("change", () => validateSet(parseInt(sel.dataset.set, 10)));
   });
+
+  // If prefill data provided, set select values
+  if (prefillData) {
+    for (const [k,v] of Object.entries(prefillData)) {
+      const el = document.querySelector(`[name="${k}"]`);
+      if (el) el.value = v;
+    }
+  }
 }
 
 render();
@@ -234,13 +266,13 @@ function validateAll() {
 }
 
 // ----- Scoring -----
-function calculate() {
+function calculateFromData(data) {
   const totals = { D: 0, i: 0, S: 0, C: 0 };
 
   SETS.forEach((set, setIdx) => {
     set.items.forEach((item, itemIdx) => {
-      const sel = document.querySelector(`select[data-set="${setIdx}"][data-item="${itemIdx}"]`);
-      const val = parseInt(sel.value, 10);
+      const name = `set-${setIdx}-item-${itemIdx}`;
+      const val = parseInt(data[name], 10) || 0;
       totals[item.style] += val;
     });
   });
@@ -253,9 +285,18 @@ function calculate() {
   return { totals, ranked, topStyle, topScore, secondStyle, secondScore };
 }
 
+function formToData() {
+  const f = document.getElementById("quizForm");
+  const fd = new FormData(f);
+  const obj = {};
+  for (const [k,v] of fd.entries()) obj[k] = v;
+  return obj;
+}
+
 // ----- Output -----
 const outputEl = document.getElementById("output");
 const globalErrorEl = document.getElementById("globalError");
+const submitStatusEl = document.getElementById("submitStatus");
 
 document.getElementById("calcBtn").addEventListener("click", () => {
   globalErrorEl.style.display = "none";
@@ -268,7 +309,8 @@ document.getElementById("calcBtn").addEventListener("click", () => {
     return;
   }
 
-  const res = calculate();
+  const data = formToData();
+  const res = calculateFromData(data);
 
   const top = DESCRIPTIONS[res.topStyle];
   const second = DESCRIPTIONS[res.secondStyle];
@@ -292,12 +334,162 @@ document.getElementById("calcBtn").addEventListener("click", () => {
   outputEl.style.display = "block";
 });
 
+// Reset: clear selects, errors, output
 document.getElementById("resetBtn").addEventListener("click", () => {
   document.querySelectorAll("select").forEach(s => s.value = "");
   document.querySelectorAll(".error").forEach(e => { e.style.display = "none"; e.textContent = ""; });
   outputEl.style.display = "none";
   globalErrorEl.style.display = "none";
+  submitStatusEl.style.display = "none";
 });
+
+// Save to localStorage
+document.getElementById("saveBtn").addEventListener("click", () => {
+  const data = formToData();
+  localStorage.setItem("disc-quiz-saved", JSON.stringify(data));
+  alert("Saved locally.");
+});
+
+// Load from localStorage
+document.getElementById("loadBtn").addEventListener("click", () => {
+  const raw = localStorage.getItem("disc-quiz-saved");
+  if (!raw) {
+    alert("No saved quiz found in local storage.");
+    return;
+  }
+  const obj = JSON.parse(raw);
+  render(obj);
+  alert("Loaded saved answers.");
+});
+
+// Export JSON download
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const data = formToData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "disc-quiz-results.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+// Share result by encoding answers in URL hash (short-lived, client-side)
+document.getElementById("shareBtn").addEventListener("click", () => {
+  if (!validateAll()) {
+    alert("Please complete and fix validation before sharing.");
+    return;
+  }
+  const data = formToData();
+  // Encode as base64 JSON to keep query readable
+  const json = JSON.stringify(data);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  const shareUrl = `${location.origin}${location.pathname}#data=${b64}`;
+  // Copy to clipboard
+  navigator.clipboard.writeText(shareUrl).then(() => {
+    alert("Share URL copied to clipboard. Paste it to share the filled quiz.");
+  }, () => {
+    prompt("Copy this URL:", shareUrl);
+  });
+});
+
+// On load, if URL hash contains data=<base64>, prefill the form
+(function prefillFromHash(){
+  if (!location.hash) return;
+  const m = location.hash.match(/data=([^&]+)/);
+  if (!m) return;
+  try {
+    const b64 = m[1];
+    const json = decodeURIComponent(escape(atob(b64)));
+    const obj = JSON.parse(json);
+    render(obj);
+    // Optionally auto-calc
+    // document.getElementById("calcBtn").click();
+  } catch (e) {
+    console.warn("Failed to parse shared quiz data:", e);
+  }
+})();
+
+// ----- Formspree submission -----
+// Replace {form_id} with your Formspree form endpoint (e.g. "/f/mnqlkzba")
+document.getElementById('submitFormspreeBtn').addEventListener('click', async () => {
+  // Clear previous status
+  submitStatusEl.style.display = 'none';
+  submitStatusEl.textContent = '';
+
+  if (!validateAll()) {
+    submitStatusEl.style.display = 'block';
+    submitStatusEl.className = 'status error';
+    submitStatusEl.textContent = 'Please fix highlighted sets before submitting.';
+    return;
+  }
+
+  // Check honeypot
+  const botField = document.getElementById('bot-field');
+  if (botField && botField.value) {
+    // likely a bot; silently ignore
+    console.warn('Honeypot triggered; aborting submit.');
+    submitStatusEl.style.display = 'block';
+    submitStatusEl.className = 'status error';
+    submitStatusEl.textContent = 'Submission blocked (spam detection).';
+    return;
+  }
+
+  const data = formToData();
+
+  // Add metadata for easier review in Formspree
+  const payload = {
+    _subject: 'DiSC Quiz Response',
+    source: location.href,
+    timestamp: new Date().toISOString(),
+    ...data
+  };
+
+  const submitBtn = document.getElementById('submitFormspreeBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Submitting…';
+
+  try {
+    const res = await fetch('https://formspree.io/f/{form_id}', { // <-- REPLACE {form_id}
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (res.ok) {
+      submitStatusEl.style.display = 'block';
+      submitStatusEl.className = 'status success';
+      submitStatusEl.textContent = 'Thank you — your responses were submitted.';
+      // Optionally clear or disable the form
+      // document.getElementById('quizForm').reset();
+      outputEl.style.display = 'none';
+    } else {
+      submitStatusEl.style.display = 'block';
+      submitStatusEl.className = 'status error';
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `HTTP ${res.status}`;
+      submitStatusEl.textContent = `Submission failed: ${msg}`;
+    }
+  } catch (err) {
+    console.error('Submit error', err);
+    submitStatusEl.style.display = 'block';
+    submitStatusEl.className = 'status error';
+    submitStatusEl.textContent = 'Network error while submitting. Try again later.';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Responses';
+  }
+});
+
+// Example: If you want server submission instead of client-only, you can send `formToData()` via fetch to your own endpoint:
+// fetch('/api/submit-quiz', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(formToData()) })
+
 </script>
 </body>
 </html>
