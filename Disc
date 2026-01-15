@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DiSC-Style Word Ranker (Unofficial)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; line-height: 1.35; }
+    h1 { font-size: 1.25rem; margin: 0 0 8px; }
+    .note { color: #444; font-size: .95rem; margin-bottom: 18px; }
+    .set { border: 1px solid #ddd; border-radius: 10px; padding: 12px 12px 6px; margin: 12px 0; }
+    .set h2 { font-size: 1.05rem; margin: 0 0 10px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 6px; border-top: 1px solid #eee; text-align: left; vertical-align: middle; }
+    th { border-top: none; color: #555; font-weight: 600; }
+    select { width: 100%; padding: 8px; font-size: 1rem; }
+    .error { color: #b00020; font-weight: 600; margin: 10px 0 0; }
+    .btnrow { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    button { padding: 10px 14px; font-size: 1rem; border: 1px solid #111; border-radius: 10px; background: #111; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #111; }
+    .results { border: 2px solid #111; border-radius: 12px; padding: 14px; margin-top: 18px; }
+    .scores { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; margin-top: 10px; }
+    .chip { border: 1px solid #ddd; border-radius: 999px; padding: 8px 10px; text-align: center; }
+    .small { color:#444; font-size: .92rem; }
+  </style>
+</head>
+<body>
+  <h1>DiSC-Style Word Ranking (Unofficial)</h1>
+  <div class="note">
+    Rank the four words in each set: use <b>4 = most like you</b>, <b>1 = least like you</b>.
+    Each number can be used <b>only once per set</b>.
+  </div>
+
+  <div id="quiz"></div>
+
+  <div class="btnrow">
+    <button id="calcBtn">Calculate Result</button>
+    <button class="secondary" id="resetBtn" type="button">Reset</button>
+  </div>
+
+  <div id="globalError" class="error" style="display:none;"></div>
+
+  <div id="output" style="display:none;" class="results"></div>
+
+<script>
+/**
+ * 10 sets x 4 words.
+ * Each option has a "style" key: D, i, S, C
+ * You can swap words freely as long as each set includes one of each style.
+ */
+const SETS = [
+  { title: "Set 1", items: [
+    { word: "Decisive", style: "D" },
+    { word: "Outgoing", style: "i" },
+    { word: "Supportive", style: "S" },
+    { word: "Analytical", style: "C" },
+  ]},
+  { title: "Set 2", items: [
+    { word: "Bold", style: "D" },
+    { word: "Friendly", style: "i" },
+    { word: "Patient", style: "S" },
+    { word: "Precise", style: "C" },
+  ]},
+  { title: "Set 3", items: [
+    { word: "Assertive", style: "D" },
+    { word: "Enthusiastic", style: "i" },
+    { word: "Loyal", style: "S" },
+    { word: "Thorough", style: "C" },
+  ]},
+  { title: "Set 4", items: [
+    { word: "Direct", style: "D" },
+    { word: "Expressive", style: "i" },
+    { word: "Considerate", style: "S" },
+    { word: "Systematic", style: "C" },
+  ]},
+  { title: "Set 5", items: [
+    { word: "Results-driven", style: "D" },
+    { word: "Talkative", style: "i" },
+    { word: "Stable", style: "S" },
+    { word: "Accurate", style: "C" },
+  ]},
+  { title: "Set 6", items: [
+    { word: "Competitive", style: "D" },
+    { word: "Inspiring", style: "i" },
+    { word: "Consistent", style: "S" },
+    { word: "Cautious", style: "C" },
+  ]},
+  { title: "Set 7", items: [
+    { word: "Fast-paced", style: "D" },
+    { word: "Charismatic", style: "i" },
+    { word: "Reliable", style: "S" },
+    { word: "Careful", style: "C" },
+  ]},
+  { title: "Set 8", items: [
+    { word: "Confident", style: "D" },
+    { word: "Sociable", style: "i" },
+    { word: "Gentle", style: "S" },
+    { word: "Logical", style: "C" },
+  ]},
+  { title: "Set 9", items: [
+    { word: "Independent", style: "D" },
+    { word: "Optimistic", style: "i" },
+    { word: "Cooperative", style: "S" },
+    { word: "Perfectionist", style: "C" },
+  ]},
+  { title: "Set 10", items: [
+    { word: "Driven", style: "D" },
+    { word: "Fun-loving", style: "i" },
+    { word: "Even-tempered", style: "S" },
+    { word: "Structured", style: "C" },
+  ]},
+];
+
+const DESCRIPTIONS = {
+  D: {
+    name: "Dominance (D)",
+    blurb: "Direct, results-focused, fast-moving. Strength: driving outcomes. Watch-out: can come off blunt or impatient."
+  },
+  i: {
+    name: "Influence (i)",
+    blurb: "Energetic, social, persuasive. Strength: building momentum and buy-in. Watch-out: may overlook details."
+  },
+  S: {
+    name: "Steadiness (S)",
+    blurb: "Patient, supportive, consistent. Strength: stabilizing teams and building trust. Watch-out: may avoid conflict."
+  },
+  C: {
+    name: "Conscientiousness (C)",
+    blurb: "Careful, analytical, quality-minded. Strength: accuracy and risk reduction. Watch-out: can get stuck perfecting."
+  }
+};
+
+// ----- Render UI -----
+const quizEl = document.getElementById("quiz");
+
+function render() {
+  quizEl.innerHTML = "";
+  SETS.forEach((set, setIdx) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "set";
+    wrapper.dataset.setIndex = setIdx;
+
+    const title = document.createElement("h2");
+    title.textContent = `${set.title}: Rank the words (4=most, 1=least)`;
+    wrapper.appendChild(title);
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = `<tr><th>Word</th><th>Rank</th></tr>`;
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    set.items.forEach((item, itemIdx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><b>${item.word}</b> <span class="small">(${item.style})</span></td>
+        <td>
+          <select data-set="${setIdx}" data-item="${itemIdx}">
+            <option value="">Select…</option>
+            <option value="4">4</option>
+            <option value="3">3</option>
+            <option value="2">2</option>
+            <option value="1">1</option>
+          </select>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+
+    const err = document.createElement("div");
+    err.className = "error";
+    err.style.display = "none";
+    err.id = `err-${setIdx}`;
+    wrapper.appendChild(err);
+
+    quizEl.appendChild(wrapper);
+  });
+
+  // Add change listeners to enforce unique ranks per set
+  document.querySelectorAll("select").forEach(sel => {
+    sel.addEventListener("change", () => validateSet(parseInt(sel.dataset.set, 10)));
+  });
+}
+
+render();
+
+// ----- Validation -----
+function validateSet(setIdx) {
+  const selects = Array.from(document.querySelectorAll(`select[data-set="${setIdx}"]`));
+  const values = selects.map(s => s.value).filter(v => v !== "");
+  const errEl = document.getElementById(`err-${setIdx}`);
+
+  // If not all selected yet, don't show errors (soft validation)
+  if (values.length < 4) {
+    errEl.style.display = "none";
+    errEl.textContent = "";
+    return true;
+  }
+
+  // Enforce uniqueness: must be exactly 1,2,3,4 once each
+  const required = ["1","2","3","4"];
+  const unique = new Set(values);
+  const ok = unique.size === 4 && required.every(r => unique.has(r));
+
+  if (!ok) {
+    errEl.style.display = "block";
+    errEl.textContent = "Use 1, 2, 3, and 4 exactly once in this set.";
+    return false;
+  } else {
+    errEl.style.display = "none";
+    errEl.textContent = "";
+    return true;
+  }
+}
+
+function validateAll() {
+  let ok = true;
+  for (let i = 0; i < SETS.length; i++) {
+    const selects = Array.from(document.querySelectorAll(`select[data-set="${i}"]`));
+    const anyMissing = selects.some(s => s.value === "");
+    if (anyMissing) {
+      ok = false;
+      const errEl = document.getElementById(`err-${i}`);
+      errEl.style.display = "block";
+      errEl.textContent = "Please rank all four words in this set.";
+      continue;
+    }
+    if (!validateSet(i)) ok = false;
+  }
+  return ok;
+}
+
+// ----- Scoring -----
+function calculate() {
+  const totals = { D: 0, i: 0, S: 0, C: 0 };
+
+  SETS.forEach((set, setIdx) => {
+    set.items.forEach((item, itemIdx) => {
+      const sel = document.querySelector(`select[data-set="${setIdx}"][data-item="${itemIdx}"]`);
+      const val = parseInt(sel.value, 10);
+      totals[item.style] += val;
+    });
+  });
+
+  // Sort styles by score desc
+  const ranked = Object.entries(totals).sort((a,b) => b[1] - a[1]); // [ [style,score], ... ]
+  const [topStyle, topScore] = ranked[0];
+  const [secondStyle, secondScore] = ranked[1];
+
+  return { totals, ranked, topStyle, topScore, secondStyle, secondScore };
+}
+
+// ----- Output -----
+const outputEl = document.getElementById("output");
+const globalErrorEl = document.getElementById("globalError");
+
+document.getElementById("calcBtn").addEventListener("click", () => {
+  globalErrorEl.style.display = "none";
+  globalErrorEl.textContent = "";
+
+  if (!validateAll()) {
+    globalErrorEl.style.display = "block";
+    globalErrorEl.textContent = "Fix the highlighted set(s), then calculate again.";
+    outputEl.style.display = "none";
+    return;
+  }
+
+  const res = calculate();
+
+  const top = DESCRIPTIONS[res.topStyle];
+  const second = DESCRIPTIONS[res.secondStyle];
+
+  outputEl.innerHTML = `
+    <div><b>Your top style:</b> ${top.name} (${res.topScore})</div>
+    <div><b>Runner-up:</b> ${second.name} (${res.secondScore})</div>
+    <div style="margin-top:10px"><b>Top style summary:</b> ${top.blurb}</div>
+
+    <div class="scores">
+      <div class="chip"><b>D</b><br>${res.totals.D}</div>
+      <div class="chip"><b>i</b><br>${res.totals.i}</div>
+      <div class="chip"><b>S</b><br>${res.totals.S}</div>
+      <div class="chip"><b>C</b><br>${res.totals.C}</div>
+    </div>
+
+    <div class="small" style="margin-top:10px">
+      Note: This is an unofficial learning tool inspired by DiSC-style language. It is not an official/validated DiSC instrument.
+    </div>
+  `;
+  outputEl.style.display = "block";
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  document.querySelectorAll("select").forEach(s => s.value = "");
+  document.querySelectorAll(".error").forEach(e => { e.style.display = "none"; e.textContent = ""; });
+  outputEl.style.display = "none";
+  globalErrorEl.style.display = "none";
+});
+</script>
+</body>
+</html>
